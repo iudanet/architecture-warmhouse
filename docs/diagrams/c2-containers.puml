@@ -1,0 +1,76 @@
+@startuml C2-Containers
+title Тёплый дом — Container Diagram (To-Be)
+
+!include <C4/C4_Container>
+
+LAYOUT_WITH_LEGEND()
+
+Person(user, "User", "Пользователь умного дома (SaaS, самообслуживание)")
+
+System_Boundary(smart_home, "Smart Home Ecosystem") {
+
+    Container(gateway, "API Gateway", "Go / net-http", "Единая точка входа: маршрутизация, аутентификация, rate limiting")
+
+    Container(user_svc, "User Service", "Go", "AAA (аутентификация, авторизация, аудит), пользователи, дома, доступы")
+    ContainerDb(user_db, "user_db", "PostgreSQL", "Пользователи, дома, права доступа")
+
+    Container(device_svc, "Device Service", "Go", "Метаданные и управление устройствами, типы, реле, подключение партнёров")
+    ContainerDb(device_db, "device_db", "PostgreSQL", "Устройства, типы устройств, состояние")
+
+    Container(automation_svc, "Automation Service", "Go", "Сценарии автоматизации (правила, триггеры, действия)")
+    ContainerDb(automation_db, "automation_db", "PostgreSQL", "Правила и сценарии автоматизации")
+
+    Container(telemetry_svc, "Telemetry Service", "Go", "Приём (подписка на MQTT, нормализация, запись) и чтение/агрегация истории телеметрии")
+    ContainerDb(telemetry_db, "telemetry_db", "ClickHouse", "Историческая телеметрия (time-series, колоночное хранилище)")
+
+    Container(connector, "Device Connector", "Go", "Транспорт к прямым устройствам через MQTT: приём телеметрии и отправка команд")
+
+    Container(cloud_connector, "Cloud Connector", "Go", "Транспорт к устройствам партнёров через облака вендоров (OAuth, webhooks)")
+
+    Container(notification, "Notification Service", "Go", "Логика и отправка уведомлений пользователям")
+
+    ContainerQueue(mqtt, "MQTT Broker", "Mosquitto / EMQX", "Edge-шина: устройства публикуют телеметрию и подписаны на команды")
+    ContainerQueue(nats, "NATS", "NATS", "Лёгкая внутренняя шина событий между микросервисами")
+}
+
+System_Ext(notify_providers, "Notification Providers", "Внешние провайдеры доставки: email / SMS / push")
+System_Ext(devices, "Smart Devices", "Физические устройства партнёров (прямое подключение): датчики, реле, ворота, камеры")
+System_Ext(vendor_cloud, "Partner Clouds", "Облака вендоров устройств (Tuya, Xiaomi, ...): REST API для команд, MQTT/WebSocket bridge для телеметрии")
+
+' ==== Синхронные потоки (REST) ====
+Rel(user, gateway, "Управляет устройствами, смотрит телеметрию", "HTTPS / REST")
+Rel(gateway, user_svc, "Аутентификация, профиль, дома", "REST")
+Rel(gateway, device_svc, "Команды и метаданные устройств", "REST")
+Rel(gateway, automation_svc, "Управление сценариями", "REST")
+Rel(gateway, telemetry_svc, "Запрос истории телеметрии", "REST")
+
+Rel(user_svc, user_db, "Читает/пишет", "SQL")
+Rel(device_svc, device_db, "Читает/пишет", "SQL")
+Rel(automation_svc, automation_db, "Читает/пишет", "SQL")
+Rel(telemetry_svc, telemetry_db, "Пишет (нормализованные измерения) / читает", "SQL")
+
+' Automation публикует действия в NATS (event-driven), а не вызывает сервисы напрямую
+Rel(automation_svc, nats, "Публикует command.requested / notification.requested", "NATS")
+Rel(nats, device_svc, "Доставляет command.requested (исполнить команду)", "NATS, подписка")
+
+' ==== Onboarding: Device Service оркестрирует подключение через коннекторы ====
+Rel(device_svc, connector, "Команды и настройка прямых устройств", "REST / NATS")
+Rel(device_svc, cloud_connector, "Команды и onboarding устройств партнёров (OAuth)", "REST / NATS")
+
+' ==== Edge (прямые устройства): MQTT, исходящие соединения от устройств ====
+Rel(devices, mqtt, "Публикуют телеметрию, подписаны на команды (исходящее соединение)", "MQTT / TLS")
+Rel(connector, mqtt, "Публикует команды устройствам", "MQTT")
+Rel(mqtt, telemetry_svc, "Доставляет измерения телеметрии (на запись)", "MQTT, подписка")
+Rel(mqtt, automation_svc, "Доставляет измерения для проверки правил", "MQTT, подписка")
+
+' ==== Edge (партнёрские устройства): через облака вендоров ====
+Rel(cloud_connector, vendor_cloud, "Привязка (OAuth) и команды устройствам", "OAuth 2.0, REST / HTTPS API")
+Rel(vendor_cloud, cloud_connector, "Поток телеметрии устройств партнёра", "MQTT / WebSocket bridge")
+Rel(cloud_connector, mqtt, "Публикует телеметрию партнёров в общий формат сообщений", "MQTT")
+
+' ==== Внутренние события (NATS) ====
+Rel(device_svc, nats, "Публикует device.state.changed", "NATS")
+Rel(nats, notification, "Доставляет device.state.changed / notification.requested", "NATS, подписка")
+Rel(notification, notify_providers, "Отправляет email / SMS / push", "HTTPS")
+
+@enduml

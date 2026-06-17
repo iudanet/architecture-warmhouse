@@ -1,0 +1,51 @@
+@startuml C3-TelemetryService
+title Тёплый дом — Component Diagram: Telemetry Service (To-Be)
+
+!include <C4/C4_Component>
+
+LAYOUT_WITH_LEGEND()
+
+Container(gateway, "API Gateway", "Go", "Точка входа клиентских запросов")
+ContainerQueue(mqtt, "MQTT Broker", "Mosquitto / EMQX", "Edge-шина телеметрии")
+
+Container_Boundary(telemetry_svc, "Telemetry Service") {
+
+    ' --- Write path ---
+    Component(consumer, "Telemetry Consumer", "Go", "Подписан на MQTT-топики телеметрии, принимает сырые измерения")
+
+    Component(normalizer, "Normalizer", "Go", "Приводит измерения разных вендоров к единому формату, валидирует и дедуплицирует")
+
+    Component(writer, "Telemetry Writer", "Go", "Пишет нормализованные измерения в ClickHouse батчами")
+
+    ' --- Read path ---
+    Component(query_api, "Telemetry Query API", "Go / net-http", "REST-эндпоинты: история и агрегаты телеметрии по устройству/локации")
+
+    Component(query_service, "Query Service", "Go", "Логика выборки и агрегации (среднее, мин/макс, за период)")
+
+    Component(repo, "Telemetry Repository", "Go", "Доступ к колоночному хранилищу телеметрии (чтение)")
+}
+
+ContainerDb(telemetry_db, "telemetry_db", "ClickHouse", "Историческая телеметрия (time-series)")
+
+' ==== Write path: MQTT -> нормализация -> ClickHouse ====
+Rel(mqtt, consumer, "Доставляет сырые измерения", "MQTT, подписка")
+Rel(consumer, normalizer, "Передаёт сырое измерение")
+Rel(normalizer, writer, "Передаёт нормализованное измерение")
+Rel(writer, telemetry_db, "Пишет батчами", "SQL")
+
+' ==== Read path: REST -> ClickHouse ====
+Rel(gateway, query_api, "Запрос истории/агрегатов телеметрии", "REST")
+Rel(query_api, query_service, "Вызывает выборку")
+Rel(query_service, repo, "Читает измерения")
+Rel(repo, telemetry_db, "Читает (история, агрегаты)", "SQL")
+
+note bottom of telemetry_svc
+  Telemetry Service владеет всей телеметрией:
+  - write path (Consumer -> Normalizer -> Writer) подписан на MQTT,
+    нормализует и валидирует данные перед записью в ClickHouse;
+  - read path (Query API) отдаёт историю и агрегаты.
+  Запись идёт через сервис (а не из MQTT в ClickHouse напрямую),
+  чтобы контролировать формат, валидацию и дедупликацию.
+end note
+
+@enduml

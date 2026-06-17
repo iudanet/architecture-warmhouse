@@ -1,0 +1,34 @@
+@startuml C3-NotificationService
+title Тёплый дом — Component Diagram: Notification Service (To-Be)
+
+!include <C4/C4_Component>
+
+LAYOUT_WITH_LEGEND()
+
+ContainerQueue(nats, "NATS", "NATS", "Внутренняя шина событий: события устройств, тревоги")
+System_Ext(notify_providers, "Notification Providers", "Внешние провайдеры доставки: email / SMS / push")
+
+Container_Boundary(notification_svc, "Notification Service") {
+
+    Component(event_consumer, "Event Consumer", "Go", "Подписан на события, требующие уведомления пользователя")
+
+    Component(notification_service, "Notification Service (use cases)", "Go", "Решает, кого и о чём уведомить, применяет настройки пользователя")
+
+    Component(template_engine, "Template Engine", "Go", "Формирует текст уведомления по шаблону и данным события")
+
+    Component(channel_router, "Channel Router", "Go", "Выбирает канал доставки (email / SMS / push) по настройкам пользователя")
+
+    Component(provider_client, "Provider Client", "Go", "Клиент к внешним провайдерам доставки")
+}
+
+' ==== Обработка событий (async) ====
+Rel(nats, event_consumer, "Доставляет device.state.changed / notification.requested", "NATS, подписка")
+Rel(event_consumer, notification_service, "Передаёт событие")
+Rel(notification_service, template_engine, "Просит сформировать текст")
+Rel(notification_service, channel_router, "Просит выбрать канал")
+Rel(channel_router, provider_client, "Передаёт готовое уведомление")
+
+' ==== Внешняя доставка ====
+Rel(provider_client, notify_providers, "Отправляет email / SMS / push", "HTTPS")
+
+@enduml

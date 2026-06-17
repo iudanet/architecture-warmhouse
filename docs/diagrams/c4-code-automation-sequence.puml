@@ -1,0 +1,55 @@
+@startuml C4-Code-AutomationSequence
+title Тёплый дом — Code Level: срабатывание сценария автоматизации (To-Be)
+
+' Самый критичный сквозной сценарий:
+' измерение от устройства -> сработало правило -> действия публикуются в NATS.
+' Edge через MQTT (исходящие соединения устройств), внутренние события через NATS.
+
+actor "Smart Device\n(датчик)" as sensor
+queue "MQTT Broker" as mqtt
+participant "Telemetry Service" as telemetry
+database "ClickHouse\n(telemetry_db)" as ch
+participant "Automation Service" as automation
+queue "NATS" as nats
+participant "Device Service" as device
+participant "Device Connector" as connector
+actor "Smart Device\n(реле/свет)" as actuator
+participant "Notification Service" as notify
+
+== Сбор телеметрии (MQTT) ==
+sensor -> mqtt : publish devices/{id}/telemetry\n(исходящее соединение)
+note right of mqtt : {device_id, value, ts}
+mqtt -> telemetry : доставка измерения (подписка)
+telemetry -> telemetry : нормализация\nи валидация
+telemetry -> ch : запись измерения (батчами)
+mqtt -> automation : доставка измерения\n(подписка на топик телеметрии)
+
+== Проверка правил ==
+automation -> automation : найти правила\nдля устройства/локации
+
+alt правило сработало (например, t < 18°C)
+    ' Automation публикует ДЕЙСТВИЯ в NATS, не вызывая сервисы напрямую
+    automation -> nats : publish command.requested\n{device_id, action: "turn_on"}
+    automation -> nats : publish notification.requested\n{user_id, "включено отопление"}
+
+    == Исполнение команды (Device Service подписан на NATS) ==
+    nats -> device : доставка command.requested
+    activate device
+    device -> device : проверить права\nи состояние устройства
+    device -> connector : отправить команду (NATS / REST)
+    connector -> mqtt : publish devices/{id}/commands (QoS 1)
+    mqtt -> actuator : доставка команды\n(устройство подписано)
+    actuator -> mqtt : publish devices/{id}/state\n(подтверждение)
+    mqtt -> device : доставка devices/{id}/state\n(State Consumer, подписка)
+    device -> device : обновить State Manager\n(источник истины по статусу)
+    device -> nats : publish device.state.changed
+    deactivate device
+
+    == Уведомление (Notification Service подписан на NATS) ==
+    nats -> notify : доставка notification.requested\n(+ device.state.changed)
+    notify -> notify : сформировать и отправить\nуведомление пользователю
+else правило не сработало
+    automation -> automation : ничего не делаем
+end
+
+@enduml

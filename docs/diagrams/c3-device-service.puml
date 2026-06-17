@@ -1,0 +1,62 @@
+@startuml C3-DeviceService
+title Тёплый дом — Component Diagram: Device Service (To-Be)
+
+!include <C4/C4_Component>
+
+LAYOUT_WITH_LEGEND()
+
+Container(gateway, "API Gateway", "Go", "Точка входа клиентских запросов")
+Container(connector, "Device Connector", "Go", "Транспорт к прямым устройствам (MQTT)")
+Container(cloud_connector, "Cloud Connector", "Go", "Транспорт к устройствам партнёров (облака)")
+ContainerQueue(mqtt, "MQTT Broker", "Mosquitto / EMQX", "Edge-шина: подтверждения статуса устройств")
+ContainerQueue(nats, "NATS", "NATS", "Внутренняя шина событий")
+
+Container_Boundary(device_svc, "Device Service") {
+
+    Component(api, "Device API Handler", "Go / net-http", "REST-эндпоинты: CRUD устройств, команды, onboarding; валидация")
+
+    Component(command_subscriber, "Command Subscriber", "Go", "Подписан на NATS command.requested от Automation Service")
+
+    Component(state_consumer, "State Consumer", "Go", "Подписан на MQTT devices/+/state, ловит подтверждения статуса от устройств")
+
+    Component(device_service, "Device Service (use cases)", "Go", "Бизнес-логика: регистрация, настройка, проверка прав, оркестрация команд")
+
+    Component(onboarding, "Onboarding Orchestrator", "Go", "Процесс подключения устройства: выбор коннектора, OAuth к облакам, хранение credentials")
+
+    Component(state_manager, "State Manager", "Go", "Обновляет текущее состояние устройств (вкл/выкл, online/offline) по подтверждениям от устройств; источник истины по статусу")
+
+    Component(command_handler, "Command Handler", "Go", "Формирует команду и выбирает транспорт (MQTT-коннектор или облачный)")
+
+    Component(repo, "Device Repository", "Go / database-sql", "Доступ к данным устройств, типов и credentials")
+
+    Component(event_publisher, "Event Publisher", "Go", "Публикует события изменения состояния устройств в NATS")
+}
+
+ContainerDb(device_db, "device_db", "PostgreSQL", "Устройства, типы, состояние, credentials подключения")
+
+' ==== Входящие запросы ====
+Rel(gateway, api, "Команды, метаданные, onboarding устройств", "REST")
+Rel(nats, command_subscriber, "Доставляет command.requested (от Automation)", "NATS, подписка")
+Rel(mqtt, state_consumer, "Доставляет devices/+/state (подтверждение статуса)", "MQTT, подписка")
+
+' ==== Внутренние связи ====
+Rel(api, device_service, "Вызывает use cases")
+Rel(command_subscriber, device_service, "Передаёт команду на исполнение")
+Rel(device_service, onboarding, "Запускает подключение устройства")
+Rel(device_service, repo, "CRUD устройств, типов, credentials")
+Rel(device_service, command_handler, "Делегирует отправку команды")
+Rel(api, state_manager, "Читает текущий статус для ответа клиенту")
+
+' ==== Обновление статуса по подтверждению от устройства ====
+Rel(state_consumer, state_manager, "Передаёт фактический статус устройства")
+Rel(state_manager, repo, "Сохраняет состояние")
+Rel(state_manager, event_publisher, "Статус изменился — опубликовать событие")
+
+' ==== Внешние связи ====
+Rel(repo, device_db, "Читает/пишет", "SQL")
+Rel(command_handler, connector, "Команда прямому устройству", "REST / NATS")
+Rel(command_handler, cloud_connector, "Команда устройству партнёра", "REST / NATS")
+Rel(onboarding, cloud_connector, "OAuth-привязка к облаку вендора", "REST")
+Rel(event_publisher, nats, "Публикует device.state.changed", "NATS")
+
+@enduml

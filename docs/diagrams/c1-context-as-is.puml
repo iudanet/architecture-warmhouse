@@ -1,0 +1,17 @@
+@startuml C1-Context-AsIs
+title Тёплый дом — Context Diagram (As-Is)
+
+!include <C4/C4_Context>
+
+LAYOUT_WITH_LEGEND()
+
+Person(user, "User", "Пользователь умного дома")
+
+System(smart_home, "Smart Home", "Монолитное приложение на Go: управление отоплением и просмотр данных о датчиках")
+
+System_Ext(temperature_api, "temperature-api", "Внешний сервис получения данных о температуре датчиков")
+
+Rel(user, smart_home, "Просматривает данные о датчиках, управляет отоплением", "HTTPS")
+Rel(smart_home, temperature_api, "Запрашивает температуру", "HTTP, синхронно")
+
+@enduml

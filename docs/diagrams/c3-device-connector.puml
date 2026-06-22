@@ -1,0 +1,32 @@
+@startuml C3-DeviceConnector
+title Тёплый дом — Component Diagram: Device Connector (To-Be)
+
+!include <C4/C4_Component>
+
+LAYOUT_WITH_LEGEND()
+
+Container(device_svc, "Device Service", "Go", "Просит отправить команду на физическое устройство")
+ContainerQueue(mqtt, "MQTT Broker", "Mosquitto / EMQX", "Edge-шина устройств")
+
+Container_Boundary(connector, "Device Connector") {
+
+    Component(command_api, "Command Handler", "Go", "Принимает запросы на отправку команды (REST / NATS) от Device Service")
+
+    Component(command_publisher, "MQTT Command Publisher", "Go", "Публикует команды в топик devices/{id}/commands (QoS 1)")
+}
+
+' ==== Команды на устройство (через MQTT) ====
+Rel(device_svc, command_api, "Команда устройству", "REST / NATS")
+Rel(command_api, command_publisher, "Передаёт команду")
+Rel(command_publisher, mqtt, "publish devices/{id}/commands", "MQTT, QoS 1")
+
+note bottom of connector
+  Device Connector отвечает ТОЛЬКО за команды прямым устройствам.
+  Устройства подключаются к MQTT-брокеру сами (исходящее соединение),
+  поэтому прямого доступа сервера к устройству за NAT не требуется.
+
+  Приём и запись телеметрии выполняет Telemetry Service
+  (подписан на MQTT, нормализует и пишет в ClickHouse).
+end note
+
+@enduml

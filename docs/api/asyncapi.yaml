@@ -1,0 +1,325 @@
+asyncapi: 3.0.0
+info:
+  title: Smart Home Async API
+  version: 1.0.0
+  description: |
+    Асинхронный API экосистемы «Тёплый дом».
+
+    Используются две шины:
+    - **MQTT** (edge) — устройства публикуют телеметрию и подписаны на команды.
+      Устройства устанавливают исходящее соединение к брокеру, что снимает
+      проблему доступа к устройствам за NAT.
+    - **NATS** (internal) — лёгкая шина событий между микросервисами.
+
+servers:
+  mqtt:
+    host: mqtt:1883
+    protocol: mqtt
+    description: MQTT-брокер (Mosquitto / EMQX) — edge-шина устройств
+  nats:
+    host: nats:4222
+    protocol: nats
+    description: NATS — внутренняя шина событий микросервисов
+
+channels:
+  deviceTelemetry:
+    address: devices/{deviceId}/telemetry
+    description: |
+      Устройство публикует измерения. Telemetry Service подписан на поток
+      (нормализация, валидация, дедупликация и запись в ClickHouse),
+      Automation Service подписан для проверки правил.
+    parameters:
+      deviceId:
+        description: Идентификатор устройства
+    messages:
+      telemetryMeasured:
+        $ref: '#/components/messages/TelemetryMeasured'
+
+  deviceCommands:
+    address: devices/{deviceId}/commands
+    description: |
+      Сервер публикует команды устройству. Устройство ПОДПИСАНО на свой топик
+      команд (QoS 1, persistent session — доставка даже после переподключения).
+    parameters:
+      deviceId:
+        description: Идентификатор устройства
+    messages:
+      deviceCommand:
+        $ref: '#/components/messages/DeviceCommand'
+
+  commandRequested:
+    address: command.requested
+    description: |
+      Действие правила: запрос на исполнение команды устройством (NATS).
+      Publisher — Automation Service, consumer — Device Service.
+    messages:
+      commandRequested:
+        $ref: '#/components/messages/CommandRequested'
+
+  notificationRequested:
+    address: notification.requested
+    description: |
+      Действие правила: запрос на отправку уведомления пользователю (NATS).
+      Publisher — Automation Service, consumer — Notification Service.
+    messages:
+      notificationRequested:
+        $ref: '#/components/messages/NotificationRequested'
+
+  deviceStateChanged:
+    address: device.state.changed
+    description: Внутреннее событие изменения состояния устройства (NATS)
+    messages:
+      deviceStateChanged:
+        $ref: '#/components/messages/DeviceStateChanged'
+
+operations:
+  publishTelemetry:
+    action: send
+    channel:
+      $ref: '#/channels/deviceTelemetry'
+    summary: Устройство публикует измерение телеметрии (MQTT)
+
+  consumeTelemetry:
+    action: receive
+    channel:
+      $ref: '#/channels/deviceTelemetry'
+    summary: Telemetry Service и Automation Service получают измерение
+
+  publishCommand:
+    action: send
+    channel:
+      $ref: '#/channels/deviceCommands'
+    summary: Device Connector публикует команду устройству (MQTT, QoS 1)
+
+  receiveCommand:
+    action: receive
+    channel:
+      $ref: '#/channels/deviceCommands'
+    summary: Устройство получает команду (подписано на свой топик)
+
+  publishCommandRequested:
+    action: send
+    channel:
+      $ref: '#/channels/commandRequested'
+    summary: Automation Service публикует запрос команды (NATS)
+
+  consumeCommandRequested:
+    action: receive
+    channel:
+      $ref: '#/channels/commandRequested'
+    summary: Device Service получает запрос и исполняет команду
+
+  publishNotificationRequested:
+    action: send
+    channel:
+      $ref: '#/channels/notificationRequested'
+    summary: Automation Service публикует запрос уведомления (NATS)
+
+  consumeNotificationRequested:
+    action: receive
+    channel:
+      $ref: '#/channels/notificationRequested'
+    summary: Notification Service получает запрос и шлёт уведомление
+
+  publishDeviceState:
+    action: send
+    channel:
+      $ref: '#/channels/deviceStateChanged'
+    summary: Device Service публикует изменение состояния (NATS)
+
+  consumeDeviceState:
+    action: receive
+    channel:
+      $ref: '#/channels/deviceStateChanged'
+    summary: Notification Service получает событие для уведомления
+
+components:
+  messages:
+    TelemetryMeasured:
+      name: TelemetryMeasured
+      title: Измерение телеметрии
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/TelemetryMeasuredPayload'
+      examples:
+        - name: temperature
+          summary: Измерение температуры
+          payload:
+            event_id: "e1d2c3b4-0000-0000-0000-000000000001"
+            device_id: "8f1c9a40-2b3d-4e5f-9a1b-2c3d4e5f6a7b"
+            value: 21.5
+            unit: "°C"
+            measured_at: "2026-06-06T13:45:00Z"
+
+    DeviceCommand:
+      name: DeviceCommand
+      title: Команда устройству
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/DeviceCommandPayload'
+      examples:
+        - name: turn_on
+          summary: Включить устройство
+          payload:
+            command_id: "c0ffee00-1234-5678-9abc-def012345678"
+            device_id: "8f1c9a40-2b3d-4e5f-9a1b-2c3d4e5f6a7b"
+            action: "turn_on"
+            params:
+              target_temperature: 22
+            issued_at: "2026-06-06T13:46:00Z"
+
+    CommandRequested:
+      name: CommandRequested
+      title: Запрос команды устройству (действие правила)
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/CommandRequestedPayload'
+      examples:
+        - name: turn_on
+          summary: Правило просит включить устройство
+          payload:
+            event_id: "b2c3d4e5-0000-0000-0000-000000000010"
+            rule_id: "r1000000-0000-0000-0000-000000000001"
+            device_id: "8f1c9a40-2b3d-4e5f-9a1b-2c3d4e5f6a7b"
+            action: "turn_on"
+            params:
+              target_temperature: 22
+            requested_at: "2026-06-06T13:46:00Z"
+
+    NotificationRequested:
+      name: NotificationRequested
+      title: Запрос уведомления пользователю (действие правила)
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/NotificationRequestedPayload'
+      examples:
+        - name: heating_on
+          summary: Уведомить пользователя о включении отопления
+          payload:
+            event_id: "c3d4e5f6-0000-0000-0000-000000000011"
+            rule_id: "r1000000-0000-0000-0000-000000000001"
+            user_id: "u1000000-0000-0000-0000-000000000001"
+            message: "Сработало правило: включено отопление в гостиной"
+            requested_at: "2026-06-06T13:46:00Z"
+
+    DeviceStateChanged:
+      name: DeviceStateChanged
+      title: Изменение состояния устройства
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/DeviceStateChangedPayload'
+      examples:
+        - name: turned_on
+          summary: Устройство включено
+          payload:
+            event_id: "a1b2c3d4-0000-0000-0000-000000000002"
+            device_id: "8f1c9a40-2b3d-4e5f-9a1b-2c3d4e5f6a7b"
+            old_status: "off"
+            new_status: "on"
+            changed_at: "2026-06-06T13:46:30Z"
+
+  schemas:
+    TelemetryMeasuredPayload:
+      type: object
+      required: [event_id, device_id, value, unit, measured_at]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: Уникальный идентификатор события (для дедупликации)
+        device_id:
+          type: string
+          format: uuid
+        value:
+          type: number
+          format: double
+        unit:
+          type: string
+          description: Единица измерения (°C, percent, ...)
+        measured_at:
+          type: string
+          format: date-time
+
+    DeviceCommandPayload:
+      type: object
+      required: [command_id, device_id, action, issued_at]
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        device_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          description: Действие (turn_on, turn_off, set_temperature, ...)
+        params:
+          type: object
+          additionalProperties: true
+        issued_at:
+          type: string
+          format: date-time
+
+    CommandRequestedPayload:
+      type: object
+      required: [event_id, rule_id, device_id, action, requested_at]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        rule_id:
+          type: string
+          format: uuid
+          description: Правило, инициировавшее команду
+        device_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          description: Действие (turn_on, turn_off, set_temperature, ...)
+        params:
+          type: object
+          additionalProperties: true
+        requested_at:
+          type: string
+          format: date-time
+
+    NotificationRequestedPayload:
+      type: object
+      required: [event_id, rule_id, user_id, message, requested_at]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        rule_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+          description: Получатель уведомления
+        message:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+
+    DeviceStateChangedPayload:
+      type: object
+      required: [event_id, device_id, new_status, changed_at]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        device_id:
+          type: string
+          format: uuid
+        old_status:
+          type: string
+          enum: [on, off, offline]
+        new_status:
+          type: string
+          enum: [on, off, offline]
+        changed_at:
+          type: string
+          format: date-time

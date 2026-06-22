@@ -1,0 +1,110 @@
+@startuml ER-Diagram
+title Тёплый дом — ER-диаграмма (логическая модель данных, To-Be)
+
+' Используется crow's foot нотация.
+' Сущности сгруппированы по микросервисам (Database per service).
+' ВАЖНО: связи между сущностями РАЗНЫХ сервисов (например House.owner_id -> User.id,
+' Device.house_id -> House.id, TelemetryData.device_id -> Device.id) — это логические
+' ссылки (soft FK), а не физические constraints, т.к. сущности лежат в разных БД.
+' Целостность таких связей обеспечивается на уровне приложения, а не СУБД.
+
+hide circle
+skinparam linetype ortho
+
+' ==================== User Service (user_db) ====================
+entity "User" as user {
+  * id : UUID <<PK>>
+  --
+  * username : varchar
+  * email : varchar
+  * password_hash : varchar
+  * role : varchar
+  * created_at : timestamp
+  * updated_at : timestamp
+}
+
+entity "House" as house {
+  * id : UUID <<PK>>
+  --
+  * owner_id : UUID <<FK -> User.id>>
+  * name : varchar
+  address : varchar
+  * created_at : timestamp
+  * updated_at : timestamp
+}
+
+' ==================== Device Service (device_db) ====================
+entity "DeviceType" as device_type {
+  * id : UUID <<PK>>
+  --
+  * name : varchar
+  * category : varchar
+  * protocol : varchar
+  unit : varchar
+  * created_at : timestamp
+  * updated_at : timestamp
+}
+
+entity "Device" as device {
+  * id : UUID <<PK>>
+  --
+  * type_id : UUID <<FK -> DeviceType.id>>
+  * house_id : UUID <<FK -> House.id>>
+  * serial_number : varchar
+  * name : varchar
+  * status : varchar
+  * created_at : timestamp
+  * updated_at : timestamp
+}
+
+' ==================== Automation Service (automation_db) ====================
+entity "AutomationRule" as rule {
+  * id : UUID <<PK>>
+  --
+  * owner_id : UUID <<FK -> User.id>>
+  * name : varchar
+  * trigger_device_id : UUID <<FK -> Device.id>>
+  * condition : jsonb
+  * action : jsonb
+  * enabled : boolean
+  * created_at : timestamp
+  * updated_at : timestamp
+}
+
+' ==================== Telemetry Service (telemetry_db) ====================
+entity "TelemetryData" as telemetry {
+  * id : UUID <<PK>>
+  --
+  * device_id : UUID <<FK -> Device.id>>
+  * value : double
+  * unit : varchar
+  * measured_at : timestamp
+}
+
+' ==================== Связи ====================
+' Один пользователь — много домов; дом принадлежит одному пользователю
+user ||--o{ house : "владеет"
+
+' Один дом — много устройств; устройство принадлежит одному дому
+house ||--o{ device : "содержит"
+
+' Один тип — много устройств; устройство имеет ровно один тип
+device_type ||--o{ device : "классифицирует"
+
+' Одно устройство — много записей телеметрии
+device ||--o{ telemetry : "генерирует"
+
+' Один пользователь — много правил автоматизации
+user ||--o{ rule : "создаёт"
+
+' Правило ссылается на устройство-триггер (одно устройство — много правил)
+device ||--o{ rule : "является триггером для"
+
+note as N1
+  Связи между сущностями РАЗНЫХ сервисов (User/House ↔ Device ↔ Telemetry/Rule) —
+  логические ссылки (soft FK), а не физические FK-constraints.
+  Database per service: каждая БД изолирована, целостность
+  межсервисных ссылок обеспечивает приложение, а не СУБД.
+end note
+
+@enduml

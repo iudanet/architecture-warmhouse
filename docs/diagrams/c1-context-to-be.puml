@@ -1,0 +1,26 @@
+@startuml C1-Context-ToBe
+title Тёплый дом — Context Diagram (To-Be)
+
+!include <C4/C4_Context>
+
+LAYOUT_WITH_LEGEND()
+
+Person(user, "User", "Пользователь умного дома: подключает устройства, настраивает сценарии, смотрит телеметрию (SaaS, самообслуживание)")
+
+System(smart_home, "Smart Home Ecosystem", "Экосистема умного дома: управление устройствами (отопление, свет, ворота, наблюдение), автоматизация, телеметрия")
+
+System_Ext(devices, "Smart Devices", "Физические устройства партнёров (прямое подключение): датчики, реле, ворота, камеры")
+System_Ext(vendor_cloud, "Partner Clouds", "Облака вендоров устройств (Tuya, Xiaomi, ...): устройства, подключённые через облако партнёра")
+System_Ext(notify_providers, "Notification Providers", "Внешние провайдеры доставки уведомлений: email / SMS / push")
+
+Rel(user, smart_home, "Управляет устройствами и сценариями, смотрит телеметрию", "HTTPS / REST")
+' Прямые устройства сами устанавливают исходящее соединение к системе (за NAT):
+' публикуют телеметрию и получают команды через тот же канал.
+Rel(devices, smart_home, "Публикуют телеметрию и получают команды (исходящее соединение)", "MQTT / TLS")
+' Устройства партнёров подключаются через облако вендора по стандартным протоколам:
+' команды — через REST API облака, телеметрия — через MQTT/WebSocket bridge.
+Rel(smart_home, vendor_cloud, "Привязка аккаунта и команды устройствам", "OAuth 2.0, REST / HTTPS API")
+Rel(vendor_cloud, smart_home, "Поток телеметрии устройств партнёра", "MQTT / WebSocket bridge")
+Rel(smart_home, notify_providers, "Отправляет уведомления пользователю", "HTTPS")
+
+@enduml

@@ -1,0 +1,44 @@
+@startuml C3-UserService
+title Тёплый дом — Component Diagram: User Service (To-Be)
+
+!include <C4/C4_Component>
+
+LAYOUT_WITH_LEGEND()
+
+Container(gateway, "API Gateway", "Go", "Точка входа клиентских запросов")
+
+Container_Boundary(user_svc, "User Service") {
+
+    Component(api, "User API Handler", "Go / net-http", "REST-эндпоинты: регистрация, логин, профиль, дома, доступы; валидация входных данных")
+
+    Component(auth_service, "Auth Service", "Go", "Аутентификация, выпуск и проверка JWT-токенов, проверка прав (авторизация)")
+
+    Component(user_service, "User Service (use cases)", "Go", "Бизнес-логика: пользователи, профили, управление домами и доступами")
+
+    Component(audit, "Audit Logger", "Go", "Аудит действий пользователей (третья A в AAA)")
+
+    Component(user_repo, "User Repository", "Go / database-sql", "Доступ к данным пользователей и прав")
+
+    Component(house_repo, "House Repository", "Go / database-sql", "Доступ к данным домов и связей пользователь-дом")
+}
+
+ContainerDb(user_db, "user_db", "PostgreSQL", "Пользователи, дома, права доступа, аудит")
+
+' ==== Входящие запросы ====
+Rel(gateway, api, "Аутентификация, профиль, дома", "REST")
+
+' ==== Внутренние связи ====
+Rel(api, auth_service, "Логин, проверка токена")
+Rel(api, user_service, "Профиль, дома, доступы")
+Rel(auth_service, user_repo, "Проверяет учётные данные")
+Rel(user_service, user_repo, "CRUD пользователей и прав")
+Rel(user_service, house_repo, "CRUD домов")
+Rel(user_service, audit, "Логирует действия")
+Rel(auth_service, audit, "Логирует вход/выход")
+
+' ==== Хранилище ====
+Rel(user_repo, user_db, "Читает/пишет", "SQL")
+Rel(house_repo, user_db, "Читает/пишет", "SQL")
+Rel(audit, user_db, "Пишет записи аудита", "SQL")
+
+@enduml

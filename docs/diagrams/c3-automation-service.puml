@@ -1,0 +1,58 @@
+@startuml C3-AutomationService
+title Тёплый дом — Component Diagram: Automation Service (To-Be)
+
+!include <C4/C4_Component>
+
+LAYOUT_WITH_LEGEND()
+
+Container(gateway, "API Gateway", "Go", "Точка входа клиентских запросов")
+ContainerQueue(mqtt, "MQTT Broker", "Mosquitto / EMQX", "Edge-шина телеметрии устройств")
+ContainerQueue(nats, "NATS", "NATS", "Внутренняя шина событий между сервисами")
+
+Container_Boundary(automation_svc, "Automation Service") {
+
+    Component(api, "Automation API Handler", "Go / net-http", "REST-эндпоинты: CRUD сценариев и правил; валидация входных данных")
+
+    Component(rule_service, "Rule Service (use cases)", "Go", "Бизнес-логика: создание, изменение и хранение правил автоматизации")
+
+    Component(telemetry_subscriber, "Telemetry Subscriber", "Go", "Подписан на MQTT-топики телеметрии, передаёт измерения движку правил")
+
+    Component(rule_engine, "Rule Engine", "Go", "Сопоставляет входящие измерения с условиями правил и формирует действия")
+
+    Component(action_executor, "Action Executor", "Go", "Публикует события действий сработавших правил (команда / уведомление)")
+
+    Component(event_publisher, "Event Publisher", "Go", "Публикует события в NATS: command.requested, notification.requested")
+
+    Component(repo, "Rule Repository", "Go / database-sql", "Доступ к данным правил и сценариев")
+}
+
+ContainerDb(automation_db, "automation_db", "PostgreSQL", "Правила и сценарии автоматизации")
+
+' ==== Управление правилами (sync) ====
+Rel(gateway, api, "Управление сценариями", "REST")
+Rel(api, rule_service, "CRUD правил")
+Rel(rule_service, repo, "Читает/пишет правила")
+
+' ==== Срабатывание правил: MQTT-подписка -> публикация событий в NATS ====
+Rel(mqtt, telemetry_subscriber, "Доставляет измерения телеметрии", "MQTT, подписка")
+Rel(telemetry_subscriber, rule_engine, "Передаёт измерение")
+Rel(rule_engine, repo, "Загружает применимые правила")
+Rel(rule_engine, action_executor, "Передаёт действия сработавших правил")
+Rel(action_executor, event_publisher, "Просит опубликовать событие действия")
+
+' ==== Действия публикуются в NATS (event-driven, без прямой связи с сервисами) ====
+Rel(event_publisher, nats, "publish command.requested (вкл/выкл устройства)", "NATS")
+Rel(event_publisher, nats, "publish notification.requested (уведомить пользователя)", "NATS")
+
+' ==== Хранилище ====
+Rel(repo, automation_db, "Читает/пишет", "SQL")
+
+note bottom of automation_svc
+  Automation Service не вызывает Device/Notification напрямую.
+  Он публикует события действий в NATS:
+  - command.requested      -> слушает Device Service (исполняет команду)
+  - notification.requested -> слушает Notification Service (шлёт уведомление)
+  Это снижает связанность и позволяет добавлять новые типы действий.
+end note
+
+@enduml
